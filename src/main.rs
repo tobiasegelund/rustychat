@@ -4,9 +4,7 @@ use std::error::Error;
 use std::net::TcpListener;
 use std::net::TcpStream;
 use std::env;
-use std::process::exit;
 use std::fmt;
-use std::str::from_utf8;
 // use std::thread;
 // use std::sync::mpsc;
 
@@ -15,8 +13,6 @@ enum UserAction {
     Start,
     // Connect to Hub
     Connect,
-    // Terminate Hub
-    Terminate,
 }
 
 #[derive(Debug)]
@@ -30,21 +26,39 @@ impl fmt::Display for ActionError {
     }
 }
 
+struct Client {
+    name: String,
+}
+
+impl Client {
+    fn from(name: String) -> Self {
+       Client { name }
+    }
+
+    fn write_msg(self, mut stream: &TcpStream) -> Self {
+        let mut msg = String::new();
+        std::io::stdin().read_line(&mut msg).unwrap();
+        if msg.len() > 0 {
+            let msg = format!("{}: {}", self.name, msg);
+            stream.write(msg.as_bytes()).unwrap();
+        }
+        self
+    }
+}
+
+
 fn handle_connection(mut stream: TcpStream) {
     let mut buffer = [0 as u8; 1024];
 
     stream.read(&mut buffer).unwrap();
-    let msg = from_utf8(&mut buffer).unwrap();
+    let msg = String::from_utf8_lossy(&mut buffer);
     println!("{}", msg);
 
-    // let response = "Message back";
-    // stream.write(response.as_bytes()).unwrap();
+    stream.write(msg.as_bytes()).unwrap();
     // stream.flush().unwrap();
 }
 
-fn collect_action() -> Result<UserAction, ActionError> {
-    let args: Vec<String> = env::args().collect();
-    assert_eq!(args.len(), 2); // the program itself and action must be the only specified values
+fn collect_action(args: &Vec<String>) -> Result<UserAction, ActionError> {
     let flag = &args[1][..];
     match flag {
         "start" => {
@@ -54,51 +68,56 @@ fn collect_action() -> Result<UserAction, ActionError> {
             return Ok(UserAction::Connect)
         }
         _ => {
-           return Err(ActionError);
+           return Err(ActionError)
         }
     }
 }
 
+fn collect_name(args: &Vec<String>) -> String {
+    if args.len() < 3 {
+        return String::from("Default")
+    }
+    let name = &args[2];
+
+    name.to_string()
+}
+
 fn main() {
-    let action = match collect_action() {
-        Ok(action) => action,
-        Err(e) => {
-            println!("{}", e);
-            exit(2);
-        },
-    };
+    let args: Vec<String> = env::args().collect();
+    let action = collect_action(&args);
+    let name = collect_name(&args);
 
     match action {
-        UserAction::Start => {
+        Ok(UserAction::Start) => {
             let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
             println!("Connection established");
 
-            loop {
-                for stream in listener.incoming() {
-                    match stream {
-                        Ok(stream) => {
-                            handle_connection(stream);
-                        }
-                        Err(e) => {
-                            eprintln!("Connection failed with error: {}", e);
-                        }
+            for stream in listener.incoming() {
+                match stream {
+                    Ok(stream) => {
+                        handle_connection(stream);
+                    }
+                    Err(e) => {
+                        eprintln!("Connection failed with error: {}", e);
                     }
                 }
+                // client.write_msg(&stream);
+                // write stream here
             }
         }
 
-        UserAction::Connect => {
-            while let Ok(mut stream) = TcpStream::connect("127.0.0.1:7878") {
-                // match input stream here whether something is entered or something needs to be
-                // read
-                let msg = "hello";
-                stream.write(msg.as_bytes()).unwrap();
-                // do stuff
+        Ok(UserAction::Connect) => {
+            // Add name as CLI option
+            let mut client = Client::from(name);
+            while let Ok(stream) = TcpStream::connect("127.0.0.1:7878") {
+                client = client.write_msg(&stream);
+                handle_connection(stream);
             }
             eprintln!("Couldn't connect to the hub");
         }
-        UserAction::Terminate => {
-            panic!("Terminate Hub");
+
+        Err(_) => {
+           eprintln!("Terminated: Action was not possible");
         }
     }
 }
