@@ -1,8 +1,10 @@
 // use rustychat::Hub;
-use std::io::prelude::*;
+use std::io::{Read, Write};
 use std::error::Error;
-use std::net::TcpListener;
-use std::net::TcpStream;
+use std::collections::HashMap;
+use std::net::{TcpListener, TcpStream};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::env;
 use std::fmt;
 // use std::thread;
@@ -26,6 +28,66 @@ impl fmt::Display for ActionError {
     }
 }
 
+#[derive(Clone)]
+struct Conn {
+    stream: Arc<Mutex<TcpStream>>,
+    connections: Connections,
+}
+
+impl Conn {
+    fn read(&self, mut buf: &mut [u8]) -> std::io::Result<usize> {
+        self.stream.lock().unwrap().read(&mut buf)
+    }
+
+    fn write(&self, buf: &[u8]) -> std::io::Result<usize> {
+        match self.stream.try_lock() {
+            Ok(mut lock) => {
+                lock.write(buf)
+            }
+            Err(_) => {
+                Ok(0)
+            }
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Connections {
+    counter: Arc<Mutex<u32>>,
+    connections: Arc<Mutex<HashMap<u32, Conn>>>,
+}
+
+impl Connections {
+    fn new() -> Self {
+        Connections {
+            counter: Arc::new(Mutex::new(0)),
+            connections: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn store(&self, conn: Conn) -> u32 {
+        *self.counter.lock().unwrap() += 1;
+        let id = *self.counter.lock().unwrap();
+        self.connections.lock().unwrap().insert(id, conn);
+        return id
+    }
+
+    fn broadcast(&self, buf: &[u8]) {
+        for (id, conn) in self.connections.lock().unwrap().iter() {
+            match conn.write(&buf) {
+                Ok(size) => {
+                    println!("[{}] Wrote {} to connection", id, size);
+                }
+                Err(_) => {
+                    eprintln!("Error trying to broadcast");
+                }
+            }
+        }
+    }
+}
+
+
+
 struct Client {
     name: String,
 }
@@ -47,15 +109,24 @@ impl Client {
 }
 
 
-fn handle_connection(mut stream: TcpStream) {
-    let mut buffer = [0 as u8; 1024];
+fn handle_connection(conn: Conn) {
+    let id = conn.connections.store(conn.clone());
+    println!("{} has connected", id);
 
-    stream.read(&mut buffer).unwrap();
-    let msg = String::from_utf8_lossy(&mut buffer);
-    println!("{}", msg);
-
-    stream.write(msg.as_bytes()).unwrap();
-    // stream.flush().unwrap();
+    loop {
+        let mut buf = vec![0; 1024];
+        match conn.read(&mut buf) {
+            Ok(read) if read > 0 => {
+                let msg = String::from_utf8_lossy(&buf);
+                let msg = format!("[{}] {}", id, msg);
+                conn.connections.broadcast(msg.as_bytes());
+            }
+            Ok(_) => {}
+            Err(_) => {
+                eprintln!("Error");
+            }
+        }
+    }
 }
 
 fn collect_action(args: &Vec<String>) -> Result<UserAction, ActionError> {
@@ -87,6 +158,8 @@ fn main() {
     let action = collect_action(&args);
     let name = collect_name(&args);
 
+    let connections = Connections::new();
+
     match action {
         Ok(UserAction::Start) => {
             let listener = TcpListener::bind("127.0.0.1:7878").unwrap();
@@ -95,14 +168,16 @@ fn main() {
             for stream in listener.incoming() {
                 match stream {
                     Ok(stream) => {
-                        handle_connection(stream);
+                        let conn = Conn {
+                           stream: Arc::new(Mutex::new(stream)),
+                           connections: connections.clone(), // Implement clone trait
+                        };
+                        thread::spawn(move || handle_connection(conn));
                     }
                     Err(e) => {
                         eprintln!("Connection failed with error: {}", e);
                     }
                 }
-                // client.write_msg(&stream);
-                // write stream here
             }
         }
 
@@ -111,7 +186,6 @@ fn main() {
             let mut client = Client::from(name);
             while let Ok(stream) = TcpStream::connect("127.0.0.1:7878") {
                 client = client.write_msg(&stream);
-                handle_connection(stream);
             }
             eprintln!("Couldn't connect to the hub");
         }
