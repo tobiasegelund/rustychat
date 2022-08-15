@@ -10,6 +10,8 @@ use std::fmt;
 // use std::thread;
 // use std::sync::mpsc;
 
+const MAX_BUF_LEN: usize = 1024 * 4;
+
 enum UserAction {
     // Start Hub
     Start,
@@ -41,14 +43,10 @@ impl Conn {
 
     fn write(&self, buf: &[u8]) -> std::io::Result<usize> {
         match self.stream.try_lock() {
-            Ok(mut lock) => {
-                lock.write(buf)
-            }
-            Err(_) => {
-                Ok(0)
-            }
+          Ok(mut lock) => {lock.write(buf)},
+          Err(_e) => {Ok(0)},
         }
-    }
+  }
 }
 
 #[derive(Clone)]
@@ -96,16 +94,6 @@ impl Client {
     fn from(name: String) -> Self {
        Client { name }
     }
-
-    fn write_msg(self, mut stream: &TcpStream) -> Self {
-        let mut msg = String::new();
-        std::io::stdin().read_line(&mut msg).unwrap();
-        if msg.len() > 0 {
-            let msg = format!("{}: {}", self.name, msg);
-            stream.write(msg.as_bytes()).unwrap();
-        }
-        self
-    }
 }
 
 
@@ -114,16 +102,17 @@ fn handle_connection(conn: Conn) {
     println!("{} has connected", id);
 
     loop {
-        let mut buf = vec![0; 1024];
+        let mut buf = vec![0; MAX_BUF_LEN];
         match conn.read(&mut buf) {
             Ok(read) if read > 0 => {
                 let msg = String::from_utf8_lossy(&buf);
                 let msg = format!("[{}] {}", id, msg);
+                println!("{}", msg);
                 conn.connections.broadcast(msg.as_bytes());
             }
             Ok(_) => {}
-            Err(_) => {
-                eprintln!("Error");
+            Err(e) => {
+                eprintln!("Error with {}", e);
             }
         }
     }
@@ -183,11 +172,21 @@ fn main() {
 
         Ok(UserAction::Connect) => {
             // Add name as CLI option
-            let mut client = Client::from(name);
-            while let Ok(stream) = TcpStream::connect("127.0.0.1:7878") {
-                client = client.write_msg(&stream);
+            let client = Client::from(name);
+            loop {
+                let mut msg = String::new();
+                std::io::stdin().read_line(&mut msg).unwrap();
+                if msg.len() > 0 {
+                    let msg = format!("{}: {}", client.name, msg);
+                    if let Ok(mut stream) = TcpStream::connect("127.0.0.1:7878") {
+                        stream.set_read_timeout(None).expect("set_read_timeout call failed");
+                        stream.write(msg.as_bytes()).unwrap();
+                    }
+                    else {
+                        eprintln!("Couldn't connect to the hub");
+                    }
+                }
             }
-            eprintln!("Couldn't connect to the hub");
         }
 
         Err(_) => {
