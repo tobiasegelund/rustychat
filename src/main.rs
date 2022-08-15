@@ -117,9 +117,9 @@ fn handle_connection(conn: Conn) {
     }
 }
 
-fn handle_response(mut stream: TcpStream) {
+fn handle_response(stream: Arc<Mutex<TcpStream>>) {
     let mut buf = [0; MAX_BUF_LEN];
-    stream.read(&mut buf).unwrap();
+    stream.lock().unwrap().read(&mut buf).unwrap();
     let msg = String::from_utf8_lossy(&buf);
     println!("{}", msg);
 
@@ -178,18 +178,20 @@ fn main() {
         }
 
         Ok(UserAction::Connect) => {
-            // Add name as CLI option
             let client = Client::from(name);
-            if let Ok(mut stream) = TcpStream::connect("127.0.0.1:7878") {
-                // stream.set_read_timeout(None).expect("set_read_timeout call failed");
+            if let Ok(stream) = TcpStream::connect("127.0.0.1:7878") {
                 loop {
+                    let stream_read = Arc::new(Mutex::new(stream.try_clone().unwrap()));
+                    let stream_write = Arc::new(Mutex::new(stream.try_clone().unwrap()));
                     let mut msg = String::new();
                     std::io::stdin().read_line(&mut msg).unwrap();
                     if msg.len() > 0 {
                         let msg = format!("{}: {}", client.name, msg);
-                        stream.write(msg.as_bytes()).unwrap();
+                        thread::spawn(move || {
+                            stream_write.lock().unwrap().write(msg.as_bytes()).unwrap();
+                        });
                     }
-                    handle_response(stream.try_clone().unwrap());
+                    thread::spawn(move || handle_response(stream_read));
                 }
             }
             else {
