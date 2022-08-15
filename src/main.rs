@@ -7,7 +7,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::env;
 use std::fmt;
-// use std::thread;
 // use std::sync::mpsc;
 
 const MAX_BUF_LEN: usize = 1024 * 4;
@@ -118,6 +117,14 @@ fn handle_connection(conn: Conn) {
     }
 }
 
+fn handle_response(mut stream: TcpStream) {
+    let mut buf = [0; MAX_BUF_LEN];
+    stream.read(&mut buf).unwrap();
+    let msg = String::from_utf8_lossy(&buf);
+    println!("{}", msg);
+
+}
+
 fn collect_action(args: &Vec<String>) -> Result<UserAction, ActionError> {
     let flag = &args[1][..];
     match flag {
@@ -173,19 +180,20 @@ fn main() {
         Ok(UserAction::Connect) => {
             // Add name as CLI option
             let client = Client::from(name);
-            loop {
-                let mut msg = String::new();
-                std::io::stdin().read_line(&mut msg).unwrap();
-                if msg.len() > 0 {
-                    let msg = format!("{}: {}", client.name, msg);
-                    if let Ok(mut stream) = TcpStream::connect("127.0.0.1:7878") {
-                        stream.set_read_timeout(None).expect("set_read_timeout call failed");
+            if let Ok(mut stream) = TcpStream::connect("127.0.0.1:7878") {
+                // stream.set_read_timeout(None).expect("set_read_timeout call failed");
+                loop {
+                    let mut msg = String::new();
+                    std::io::stdin().read_line(&mut msg).unwrap();
+                    if msg.len() > 0 {
+                        let msg = format!("{}: {}", client.name, msg);
                         stream.write(msg.as_bytes()).unwrap();
                     }
-                    else {
-                        eprintln!("Couldn't connect to the hub");
-                    }
+                    handle_response(stream.try_clone().unwrap());
                 }
+            }
+            else {
+                eprintln!("Couldn't connect to the hub");
             }
         }
 
