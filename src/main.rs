@@ -44,7 +44,7 @@ impl Conn {
     fn write(&self, buf: &[u8]) -> std::io::Result<usize> {
         match self.stream.try_lock() {
           Ok(mut lock) => {lock.write(buf)},
-          Err(_e) => {Ok(0)},
+          Err(_) => {Ok(0)},
         }
   }
 }
@@ -72,13 +72,9 @@ impl Connections {
 
     fn broadcast(&self, buf: &[u8]) {
         for (id, conn) in self.connections.lock().unwrap().iter() {
-            match conn.write(&buf) {
-                Ok(size) => {
-                    println!("[{}] Wrote {} to connection", id, size);
-                }
-                Err(_) => {
-                    eprintln!("Error trying to broadcast");
-                }
+        match conn.write(&buf) {
+                Ok(size) => { println!("[{}] Wrote {} to connection...", id, size); },
+                Err(e) => { println!("[{}] Error writing to connection {}", id, e); },
             }
         }
     }
@@ -180,9 +176,10 @@ fn main() {
             for stream in listener.incoming() {
                 match stream {
                     Ok(stream) => {
+                        stream.set_nonblocking(true).expect("Unable to set to nonblocking");
                         let conn = Conn {
                            stream: Arc::new(Mutex::new(stream)),
-                           connections: connections.clone(), // Implement clone trait
+                           connections: connections.clone(),
                         };
                         thread::spawn(move || handle_connection(conn));
                     }
@@ -212,7 +209,8 @@ fn main() {
                         Err(_) => {}
                     }
 
-                    sleep(100);
+                    // Add delay to hinder maximum open files error from stream cloning
+                    sleep(200);
                 }
             }
             else {
