@@ -7,7 +7,8 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::env;
 use std::fmt;
-// use std::sync::mpsc;
+use std::sync::mpsc;
+use std::sync::mpsc::Receiver;
 
 const MAX_BUF_LEN: usize = 1024 * 4;
 
@@ -83,6 +84,11 @@ impl Connections {
     }
 }
 
+fn sleep(millis: u64) {
+    let duration = std::time::Duration::from_millis(millis);
+    thread::sleep(duration);
+}
+
 
 
 struct Client {
@@ -93,6 +99,16 @@ impl Client {
     fn from(name: String) -> Self {
        Client { name }
     }
+}
+
+fn spawn_stdin_channel() -> Receiver<String> {
+    let (tx, rx) = mpsc::channel::<String>();
+    thread::spawn(move || loop {
+        let mut buffer = String::new();
+        std::io::stdin().read_line(&mut buffer).unwrap();
+        tx.send(buffer).unwrap();
+    });
+    rx
 }
 
 
@@ -111,7 +127,7 @@ fn handle_connection(conn: Conn) {
             }
             Ok(_) => {}
             Err(e) => {
-                eprintln!("Error with {}", e);
+                eprintln!("{}", e);
             }
         }
     }
@@ -180,18 +196,23 @@ fn main() {
         Ok(UserAction::Connect) => {
             let client = Client::from(name);
             if let Ok(stream) = TcpStream::connect("127.0.0.1:7878") {
+                let stdin_channel = spawn_stdin_channel();
                 loop {
                     let stream_read = Arc::new(Mutex::new(stream.try_clone().unwrap()));
                     let stream_write = Arc::new(Mutex::new(stream.try_clone().unwrap()));
-                    let mut msg = String::new();
-                    std::io::stdin().read_line(&mut msg).unwrap();
-                    if msg.len() > 0 {
-                        let msg = format!("{}: {}", client.name, msg);
-                        thread::spawn(move || {
-                            stream_write.lock().unwrap().write(msg.as_bytes()).unwrap();
-                        });
-                    }
                     thread::spawn(move || handle_response(stream_read));
+
+                    match stdin_channel.try_recv() {
+                        Ok(msg) => {
+                            let msg = format!("{}: {}", client.name, msg);
+                            thread::spawn(move || {
+                                stream_write.lock().unwrap().write(msg.as_bytes()).unwrap();
+                            });
+                        }
+                        Err(_) => {}
+                    }
+
+                    sleep(100);
                 }
             }
             else {
