@@ -193,6 +193,7 @@ fn main() {
         Ok(UserAction::Connect) => {
             let client = Client::from(name);
             if let Ok(stream) = TcpStream::connect("127.0.0.1:7878") {
+                println!("Connected to the Hub");
                 let stdin_channel = spawn_stdin_channel();
                 loop {
                     let stream_read = Arc::new(Mutex::new(stream.try_clone().unwrap()));

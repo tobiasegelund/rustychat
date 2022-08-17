@@ -4,8 +4,10 @@ A cache less powered chat program using TCP in terminal
 
 The program run on localhost on port 7878 - without any option to specify neither of the parts.
 
+Only the standard library has been used.
+
 ### Usage
-To start up Hub
+To start up the Hub
 ```bash
 cargo run start
 ```
